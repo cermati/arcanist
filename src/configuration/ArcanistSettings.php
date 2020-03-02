@@ -121,6 +121,23 @@ final class ArcanistSettings extends Phobject {
           "behind HTTPS signed by your organization's internal CA."),
         'example' => 'support/yourca.pem',
       ),
+      'https.user-cert' => array(
+        'type' => 'string',
+        'help' => pht(
+          "Path to a PEM certificate file to be used for arcanist's cURL ".
+          "calls. This is used primarily when your conduit endpoint is ".
+          "behind HTTPS with client certificate verification enabled."),
+        'example' => 'support/yourcert.pem',
+      ),
+      'https.user-key' => array(
+        'type' => 'string',
+        'help' => pht(
+          "Path to a private key file to be used for arcanist's cURL calls. ".
+          "To be used alongside https.user-cert. This is used primarily ".
+          "when your conduit endpoint is behind HTTPS with client certificate ".
+          "verification enabled."),
+        'example' => 'support/yourca.key',
+      ),
       'https.blindly-trust-domains' => array(
         'type' => 'list',
         'help' => pht(
