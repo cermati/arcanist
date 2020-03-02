@@ -9,6 +9,8 @@ final class HTTPSFuture extends BaseHTTPFuture {
   private static $results = array();
   private static $pool = array();
   private static $globalCABundle;
+  private static $globalUserCert;
+  private static $globalUserCertKey;
 
   private $handle;
   private $profilerCallID;
@@ -121,6 +123,46 @@ final class HTTPSFuture extends BaseHTTPFuture {
    */
   public static function getGlobalCABundle() {
     return self::$globalCABundle;
+  }
+
+  /**
+   * Set the global user certificate if one is not specified
+   * for the session, given a path.
+   *
+   * @param string The path to a valid user SSL certificate
+   * @return void
+   */
+  public static function setGlobalUserCertFromPath($path) {
+    self::$globalUserCert = $path;
+  }
+
+  /**
+   * Get the global user SSL certificate
+   *
+   * @return string
+   */
+  public static function getGlobalUserCert() {
+    return self::$globalUserCert;
+  }
+
+  /**
+   * Set the global user certificate key if one is not specified
+   * for the session, given a path.
+   *
+   * @param string The path to a valid user SSL certificate key
+   * @return void
+   */
+  public static function setGlobalUserCertKeyFromPath($path) {
+    self::$globalUserCertKey = $path;
+  }
+
+  /**
+   * Get the global user SSL certificate key
+   *
+   * @return string
+   */
+  public static function getGlobalUserCertKey() {
+    return self::$globalUserCertKey;
   }
 
   /**
@@ -400,6 +442,16 @@ final class HTTPSFuture extends BaseHTTPFuture {
 
       if ($this->canSetCAInfo()) {
         curl_setopt($curl, CURLOPT_CAINFO, $this->getCABundle());
+      }
+
+      if (self::getGlobalUserCert()) {
+        curl_setopt($curl, CURLOPT_SSLCERT, self::getGlobalUserCert());
+
+        // CURLOPT_SSLKEY is optional if the CURLOPT_SSLCERT file already
+        // contains the private key
+        if (self::getGlobalUserCertKey()) {
+          curl_setopt($curl, CURLOPT_SSLKEY, self::getGlobalUserCertKey());
+        }
       }
 
       $verify_peer = 1;
