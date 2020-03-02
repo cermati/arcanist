@@ -136,7 +136,7 @@ final class ArcanistSettings extends Phobject {
           "To be used alongside https.user-cert. This is used primarily ".
           "when your conduit endpoint is behind HTTPS with client certificate ".
           "verification enabled."),
-        'example' => 'support/yourca.key',
+        'example' => 'support/yourkey.key',
       ),
       'https.blindly-trust-domains' => array(
         'type' => 'list',
