@@ -45,7 +45,6 @@ abstract class ArcanistWorkflow extends Phobject {
   private $conduitURI;
   private $conduitCredentials;
   private $conduitAuthenticated;
-  private $forcedConduitVersion;
   private $conduitTimeout;
 
   private $userPHID;
@@ -53,7 +52,6 @@ abstract class ArcanistWorkflow extends Phobject {
   private $repositoryAPI;
   private $configurationManager;
   private $arguments = array();
-  private $passedArguments = array();
   private $command;
 
   private $stashed;
@@ -62,6 +60,7 @@ abstract class ArcanistWorkflow extends Phobject {
   private $projectInfo;
   private $repositoryInfo;
   private $repositoryReasons;
+  private $repositoryRef;
 
   private $arcanistConfiguration;
   private $parentWorkflow;
@@ -69,12 +68,196 @@ abstract class ArcanistWorkflow extends Phobject {
   private $repositoryVersion;
 
   private $changeCache = array();
+  private $conduitEngine;
 
+  private $toolset;
+  private $runtime;
+  private $configurationEngine;
+  private $configurationSourceList;
+
+  private $promptMap;
+
+  final public function setToolset(ArcanistToolset $toolset) {
+    $this->toolset = $toolset;
+    return $this;
+  }
+
+  final public function getToolset() {
+    return $this->toolset;
+  }
+
+  final public function setRuntime(ArcanistRuntime $runtime) {
+    $this->runtime = $runtime;
+    return $this;
+  }
+
+  final public function getRuntime() {
+    return $this->runtime;
+  }
+
+  final public function setConfigurationEngine(
+    ArcanistConfigurationEngine $engine) {
+    $this->configurationEngine = $engine;
+    return $this;
+  }
+
+  final public function getConfigurationEngine() {
+    return $this->configurationEngine;
+  }
+
+  final public function setConfigurationSourceList(
+    ArcanistConfigurationSourceList $list) {
+    $this->configurationSourceList = $list;
+    return $this;
+  }
+
+  final public function getConfigurationSourceList() {
+    return $this->configurationSourceList;
+  }
+
+  public function newPhutilWorkflow() {
+    $arguments = $this->getWorkflowArguments();
+    assert_instances_of($arguments, 'ArcanistWorkflowArgument');
+
+    $specs = mpull($arguments, 'getPhutilSpecification');
+
+    $phutil_workflow = id(new ArcanistPhutilWorkflow())
+      ->setName($this->getWorkflowName())
+      ->setWorkflow($this)
+      ->setArguments($specs);
+
+    $information = $this->getWorkflowInformation();
+
+    if ($information !== null) {
+      if (!($information instanceof ArcanistWorkflowInformation)) {
+        throw new Exception(
+          pht(
+            'Expected workflow ("%s", of class "%s") to return an '.
+            '"ArcanistWorkflowInformation" object from call to '.
+            '"getWorkflowInformation()", got %s.',
+            $this->getWorkflowName(),
+            get_class($this),
+            phutil_describe_type($information)));
+      }
+    }
+
+    if ($information) {
+      $synopsis = $information->getSynopsis();
+      if (strlen($synopsis)) {
+        $phutil_workflow->setSynopsis($synopsis);
+      }
+
+      $examples = $information->getExamples();
+      if ($examples) {
+        $examples = implode("\n", $examples);
+        $phutil_workflow->setExamples($examples);
+      }
+
+      $help = $information->getHelp();
+      if (strlen($help)) {
+        // Unwrap linebreaks in the help text so we don't get weird formatting.
+        $help = preg_replace("/(?<=\S)\n(?=\S)/", ' ', $help);
+
+        $phutil_workflow->setHelp($help);
+      }
+    }
+
+    return $phutil_workflow;
+  }
+
+  final public function newLegacyPhutilWorkflow() {
+    $phutil_workflow = id(new ArcanistPhutilWorkflow())
+      ->setName($this->getWorkflowName());
+
+    $arguments = $this->getArguments();
+
+    $specs = array();
+    foreach ($arguments as $key => $argument) {
+      if ($key == '*') {
+        $key = $argument;
+        $argument = array(
+          'wildcard' => true,
+        );
+      }
+
+      unset($argument['paramtype']);
+      unset($argument['supports']);
+      unset($argument['nosupport']);
+      unset($argument['passthru']);
+      unset($argument['conflict']);
+
+      $spec = array(
+        'name' => $key,
+      ) + $argument;
+
+      $specs[] = $spec;
+    }
+
+    $phutil_workflow->setArguments($specs);
+
+    $synopses = $this->getCommandSynopses();
+    $phutil_workflow->setSynopsis($synopses);
+
+    $help = $this->getCommandHelp();
+    if (strlen($help)) {
+      $phutil_workflow->setHelp($help);
+    }
+
+    return $phutil_workflow;
+  }
+
+  final protected function newWorkflowArgument($key) {
+    return id(new ArcanistWorkflowArgument())
+      ->setKey($key);
+  }
+
+  final protected function newWorkflowInformation() {
+    return new ArcanistWorkflowInformation();
+  }
+
+  final public function executeWorkflow(PhutilArgumentParser $args) {
+    $runtime = $this->getRuntime();
+
+    $this->arguments = $args;
+    $caught = null;
+
+    $runtime->pushWorkflow($this);
+
+    try {
+      $err = $this->runWorkflow($args);
+    } catch (Exception $ex) {
+      $caught = $ex;
+    }
+
+    try {
+      $this->runWorkflowCleanup();
+    } catch (Exception $ex) {
+      phlog($ex);
+    }
+
+    $runtime->popWorkflow();
+
+    if ($caught) {
+      throw $caught;
+    }
+
+    return $err;
+  }
+
+  final public function getLogEngine() {
+    return $this->getRuntime()->getLogEngine();
+  }
+
+  protected function runWorkflowCleanup() {
+    // TOOLSETS: Do we need this?
+    return;
+  }
 
   public function __construct() {}
 
-
-  abstract public function run();
+  public function run() {
+    throw new PhutilMethodNotImplementedException();
+  }
 
   /**
    * Finalizes any cleanup operations that need to occur regardless of
@@ -97,14 +280,22 @@ abstract class ArcanistWorkflow extends Phobject {
    *
    * @return string  6-space indented list of available command synopses.
    */
-  abstract public function getCommandSynopses();
+  public function getCommandSynopses() {
+    return array();
+  }
 
   /**
    * Return console formatted string with command help printed in `arc help`.
    *
    * @return string  10-space indented help to use the command.
    */
-  abstract public function getCommandHelp();
+  public function getCommandHelp() {
+    return null;
+  }
+
+  public function supportsToolset(ArcanistToolset $toolset) {
+    return false;
+  }
 
 
 /* -(  Conduit  )------------------------------------------------------------ */
@@ -183,16 +374,20 @@ abstract class ArcanistWorkflow extends Phobject {
       $this->conduit->setTimeout($this->conduitTimeout);
     }
 
-    $user = $this->getConfigFromAnySource('http.basicauth.user');
-    $pass = $this->getConfigFromAnySource('http.basicauth.pass');
-    if ($user !== null && $pass !== null) {
-      $this->conduit->setBasicAuthCredentials($user, $pass);
-    }
-
     return $this;
   }
 
   final public function getConfigFromAnySource($key) {
+    $source_list = $this->getConfigurationSourceList();
+    if ($source_list) {
+      $value_list = $source_list->getStorageValueList($key);
+      if ($value_list) {
+        return last($value_list)->getValue();
+      }
+
+      return null;
+    }
+
     return $this->configurationManager->getConfigFromAnySource($key);
   }
 
@@ -228,49 +423,13 @@ abstract class ArcanistWorkflow extends Phobject {
 
 
   /**
-   * Force arc to identify with a specific Conduit version during the
-   * protocol handshake. This is primarily useful for development (especially
-   * for sending diffs which bump the client Conduit version), since the client
-   * still actually speaks the builtin version of the protocol.
-   *
-   * Controlled by the --conduit-version flag.
-   *
-   * @param int Version the client should pretend to be.
-   * @return this
-   * @task conduit
-   */
-  final public function forceConduitVersion($version) {
-    $this->forcedConduitVersion = $version;
-    return $this;
-  }
-
-
-  /**
    * Get the protocol version the client should identify with.
    *
    * @return int Version the client should claim to be.
    * @task conduit
    */
   final public function getConduitVersion() {
-    return nonempty($this->forcedConduitVersion, 6);
-  }
-
-
-  /**
-   * Override the default timeout for Conduit.
-   *
-   * Controlled by the --conduit-timeout flag.
-   *
-   * @param float Timeout, in seconds.
-   * @return this
-   * @task conduit
-   */
-  final public function setConduitTimeout($timeout) {
-    $this->conduitTimeout = $timeout;
-    if ($this->conduit) {
-      $this->conduit->setConduitTimeout($timeout);
-    }
-    return $this;
+    return 6;
   }
 
 
@@ -569,7 +728,7 @@ abstract class ArcanistWorkflow extends Phobject {
     return $this->workingDirectory;
   }
 
-  final private function setParentWorkflow($parent_workflow) {
+  private function setParentWorkflow($parent_workflow) {
     $this->parentWorkflow = $parent_workflow;
     return $this;
   }
@@ -582,6 +741,7 @@ abstract class ArcanistWorkflow extends Phobject {
     $arc_config = $this->getArcanistConfiguration();
     $workflow = $arc_config->buildWorkflow($command);
     $workflow->setParentWorkflow($this);
+    $workflow->setConduitEngine($this->getConduitEngine());
     $workflow->setCommand($command);
     $workflow->setConfigurationManager($this->getConfigurationManager());
 
@@ -608,11 +768,12 @@ abstract class ArcanistWorkflow extends Phobject {
   }
 
   final public function getArgument($key, $default = null) {
-    return idx($this->arguments, $key, $default);
-  }
+    // TOOLSETS: Remove this legacy code.
+    if (is_array($this->arguments)) {
+      return idx($this->arguments, $key, $default);
+    }
 
-  final public function getPassedArguments() {
-    return $this->passedArguments;
+    return $this->arguments->getArg($key);
   }
 
   final public function getCompleteArgumentSpecification() {
@@ -625,8 +786,6 @@ abstract class ArcanistWorkflow extends Phobject {
   }
 
   final public function parseArguments(array $args) {
-    $this->passedArguments = $args;
-
     $spec = $this->getCompleteArgumentSpecification();
 
     $dict = array();
@@ -771,6 +930,31 @@ abstract class ArcanistWorkflow extends Phobject {
   }
 
   final public function getWorkingCopy() {
+    $configuration_engine = $this->getConfigurationEngine();
+
+    // TOOLSETS: Remove this once all workflows are toolset workflows.
+    if (!$configuration_engine) {
+      throw new Exception(
+        pht(
+          'This workflow has not yet been updated to Toolsets and can '.
+          'not retrieve a modern WorkingCopy object. Use '.
+          '"getWorkingCopyIdentity()" to retrieve a previous-generation '.
+          'object.'));
+    }
+
+    return $configuration_engine->getWorkingCopy();
+  }
+
+
+  final public function getWorkingCopyIdentity() {
+    $configuration_engine = $this->getConfigurationEngine();
+    if ($configuration_engine) {
+      $working_copy = $configuration_engine->getWorkingCopy();
+      $working_path = $working_copy->getWorkingDirectory();
+
+      return ArcanistWorkingCopyIdentity::newFromPath($working_path);
+    }
+
     $working_copy = $this->getConfigurationManager()->getWorkingCopyIdentity();
     if (!$working_copy) {
       $workflow = get_class($this);
@@ -798,6 +982,12 @@ abstract class ArcanistWorkflow extends Phobject {
   }
 
   final public function getRepositoryAPI() {
+    $configuration_engine = $this->getConfigurationEngine();
+    if ($configuration_engine) {
+      $working_copy = $configuration_engine->getWorkingCopy();
+      return $working_copy->getRepositoryAPI();
+    }
+
     if (!$this->repositoryAPI) {
       $workflow = get_class($this);
       throw new Exception(
@@ -1187,7 +1377,7 @@ abstract class ArcanistWorkflow extends Phobject {
     ));
   }
 
-  final private function loadBundleFromConduit(
+  private function loadBundleFromConduit(
     ConduitClient $conduit,
     $params) {
 
@@ -1436,7 +1626,7 @@ abstract class ArcanistWorkflow extends Phobject {
     }
 
     if ($paths) {
-      $working_copy = $this->getWorkingCopy();
+      $working_copy = $this->getWorkingCopyIdentity();
       foreach ($paths as $key => $path) {
         $full_path = Filesystem::resolvePath($path);
         if (!Filesystem::pathExists($full_path)) {
@@ -1618,22 +1808,6 @@ abstract class ArcanistWorkflow extends Phobject {
     return $parser;
   }
 
-  final protected function resolveCall(ConduitFuture $method, $timeout = null) {
-    try {
-      return $method->resolve($timeout);
-    } catch (ConduitClientException $ex) {
-      if ($ex->getErrorCode() == 'ERR-CONDUIT-CALL') {
-        echo phutil_console_wrap(
-          pht(
-            'This feature requires a newer version of Phabricator. Please '.
-            'update it using these instructions: %s',
-            'https://secure.phabricator.com/book/phabricator/article/'.
-              'upgrading/')."\n\n");
-      }
-      throw $ex;
-    }
-  }
-
   final protected function dispatchEvent($type, array $data) {
     $data += array(
       'workflow' => $this,
@@ -1773,9 +1947,10 @@ abstract class ArcanistWorkflow extends Phobject {
     }
 
     try {
-      $results = $this->getConduit()->callMethodSynchronous(
-        'repository.query',
-        $query);
+      $method = 'repository.query';
+      $results = $this->getConduitEngine()
+        ->newFuture($method, $query)
+        ->resolve();
     } catch (ConduitClientException $ex) {
       if ($ex->getErrorCode() == 'ERR-CONDUIT-CALL') {
         $reasons[] = pht(
@@ -1846,6 +2021,8 @@ abstract class ArcanistWorkflow extends Phobject {
         'This repository has no VCS UUID (this is normal for git/hg).');
     }
 
+    // TODO: Swap this for a RemoteRefQuery.
+
     $remote_uri = $this->getRepositoryAPI()->getRemoteURI();
     if ($remote_uri !== null) {
       $query = array(
@@ -1875,7 +2052,7 @@ abstract class ArcanistWorkflow extends Phobject {
    * @return ArcanistLintEngine Constructed engine.
    */
   protected function newLintEngine($engine_class = null) {
-    $working_copy = $this->getWorkingCopy();
+    $working_copy = $this->getWorkingCopyIdentity();
     $config = $this->getConfigurationManager();
 
     if (!$engine_class) {
@@ -1926,7 +2103,7 @@ abstract class ArcanistWorkflow extends Phobject {
    * @return ArcanistUnitTestEngine Constructed engine.
    */
   protected function newUnitTestEngine($engine_class = null) {
-    $working_copy = $this->getWorkingCopy();
+    $working_copy = $this->getWorkingCopyIdentity();
     $config = $this->getConfigurationManager();
 
     if (!$engine_class) {
@@ -1970,15 +2147,21 @@ abstract class ArcanistWorkflow extends Phobject {
 
   protected function openURIsInBrowser(array $uris) {
     $browser = $this->getBrowserCommand();
+
+    // The "browser" may actually be a list of arguments.
+    if (!is_array($browser)) {
+      $browser = array($browser);
+    }
+
     foreach ($uris as $uri) {
-      $err = phutil_passthru('%s %s', $browser, $uri);
+      $err = phutil_passthru('%LR %R', $browser, $uri);
       if ($err) {
         throw new ArcanistUsageException(
           pht(
-            "Failed to open '%s' in browser ('%s'). ".
-            "Check your 'browser' config option.",
+            'Failed to open URI "%s" in browser ("%s"). '.
+            'Check your "browser" config option.',
             $uri,
-            $browser));
+            implode(' ', $browser)));
       }
     }
   }
@@ -1990,19 +2173,29 @@ abstract class ArcanistWorkflow extends Phobject {
     }
 
     if (phutil_is_windows()) {
-      return 'start';
+      // See T13504. We now use "bypass_shell", so "start" alone is no longer
+      // a valid binary to invoke directly.
+      return array(
+        'cmd',
+        '/c',
+        'start',
+      );
     }
 
-    $candidates = array('sensible-browser', 'xdg-open', 'open');
+    $candidates = array(
+      'sensible-browser' => array('sensible-browser'),
+      'xdg-open' => array('xdg-open'),
+      'open' => array('open', '--'),
+    );
 
     // NOTE: The "open" command works well on OS X, but on many Linuxes "open"
     // exists and is not a browser. For now, we're just looking for other
     // commands first, but we might want to be smarter about selecting "open"
     // only on OS X.
 
-    foreach ($candidates as $cmd) {
+    foreach ($candidates as $cmd => $argv) {
       if (Filesystem::binaryExists($cmd)) {
-        return $cmd;
+        return $argv;
       }
     }
 
@@ -2068,5 +2261,207 @@ abstract class ArcanistWorkflow extends Phobject {
     return $map;
   }
 
+  final public function setConduitEngine(
+    ArcanistConduitEngine $conduit_engine) {
+    $this->conduitEngine = $conduit_engine;
+    return $this;
+  }
+
+  final public function getConduitEngine() {
+    return $this->conduitEngine;
+  }
+
+  final public function getRepositoryRef() {
+    $configuration_engine = $this->getConfigurationEngine();
+    if ($configuration_engine) {
+      // This is a toolset workflow and can always build a repository ref.
+    } else {
+      if (!$this->getConfigurationManager()->getWorkingCopyIdentity()) {
+        return null;
+      }
+
+      if (!$this->repositoryAPI) {
+        return null;
+      }
+    }
+
+    if (!$this->repositoryRef) {
+      $ref = id(new ArcanistRepositoryRef())
+        ->setPHID($this->getRepositoryPHID())
+        ->setBrowseURI($this->getRepositoryURI());
+
+      $this->repositoryRef = $ref;
+    }
+
+    return $this->repositoryRef;
+  }
+
+  final public function getToolsetKey() {
+    return $this->getToolset()->getToolsetKey();
+  }
+
+  final public function getConfig($key) {
+    return $this->getConfigurationSourceList()->getConfig($key);
+  }
+
+  public function canHandleSignal($signo) {
+    return false;
+  }
+
+  public function handleSignal($signo) {
+    return;
+  }
+
+  final public function newCommand(PhutilExecutableFuture $future) {
+    return id(new ArcanistCommand())
+      ->setLogEngine($this->getLogEngine())
+      ->setExecutableFuture($future);
+  }
+
+  final public function loadHardpoints(
+    $objects,
+    $requests) {
+    return $this->getRuntime()->loadHardpoints($objects, $requests);
+  }
+
+  protected function newPrompts() {
+    return array();
+  }
+
+  protected function newPrompt($key) {
+    return id(new ArcanistPrompt())
+      ->setWorkflow($this)
+      ->setKey($key);
+  }
+
+  public function hasPrompt($key) {
+    $map = $this->getPromptMap();
+    return isset($map[$key]);
+  }
+
+  public function getPromptMap() {
+    if ($this->promptMap === null) {
+      $prompts = $this->newPrompts();
+      assert_instances_of($prompts, 'ArcanistPrompt');
+
+      // TODO: Move this somewhere modular.
+
+      $prompts[] = $this->newPrompt('arc.state.stash')
+        ->setDescription(
+          pht(
+            'Prompts the user to stash changes and continue when the '.
+            'working copy has untracked, uncommitted, or unstaged '.
+            'changes.'));
+
+      // TODO: Swap to ArrayCheck?
+
+      $map = array();
+      foreach ($prompts as $prompt) {
+        $key = $prompt->getKey();
+
+        if (isset($map[$key])) {
+          throw new Exception(
+            pht(
+              'Workflow ("%s") generates two prompts with the same '.
+              'key ("%s"). Each prompt a workflow generates must have a '.
+              'unique key.',
+              get_class($this),
+              $key));
+        }
+
+        $map[$key] = $prompt;
+      }
+
+      $this->promptMap = $map;
+    }
+
+    return $this->promptMap;
+  }
+
+  final public function getPrompt($key) {
+    $map = $this->getPromptMap();
+
+    $prompt = idx($map, $key);
+    if (!$prompt) {
+      throw new Exception(
+        pht(
+          'Workflow ("%s") is requesting a prompt ("%s") but it did not '.
+          'generate any prompt with that name in "newPrompts()".',
+          get_class($this),
+          $key));
+    }
+
+    return clone $prompt;
+  }
+
+  final protected function getSymbolEngine() {
+    return $this->getRuntime()->getSymbolEngine();
+  }
+
+  final protected function getViewer() {
+    return $this->getRuntime()->getViewer();
+  }
+
+  final protected function readStdin() {
+    $log = $this->getLogEngine();
+    $log->writeWaitingForInput();
+
+    // NOTE: We can't just "file_get_contents()" here because signals don't
+    // interrupt it. If the user types "^C", we want to interrupt the read.
+
+    $raw_handle = fopen('php://stdin', 'rb');
+    $stdin = new PhutilSocketChannel($raw_handle);
+
+    while ($stdin->update()) {
+      PhutilChannel::waitForAny(array($stdin));
+    }
+
+    return $stdin->read();
+  }
+
+  final public function getAbsoluteURI($raw_uri) {
+    // TODO: "ArcanistRevisionRef", at least, may return a relative URI.
+    // If we get a relative URI, guess the correct absolute URI based on
+    // the Conduit URI. This might not be correct for Conduit over SSH.
+
+    $raw_uri = new PhutilURI($raw_uri);
+    if (!strlen($raw_uri->getDomain())) {
+      $base_uri = $this->getConduitEngine()
+        ->getConduitURI();
+
+      $raw_uri = id(new PhutilURI($base_uri))
+        ->setPath($raw_uri->getPath());
+    }
+
+    $raw_uri = phutil_string_cast($raw_uri);
+
+    return $raw_uri;
+  }
+
+  final public function writeToPager($corpus) {
+    $is_tty = (function_exists('posix_isatty') && posix_isatty(STDOUT));
+
+    if (!$is_tty) {
+      echo $corpus;
+    } else {
+      $pager = $this->getConfig('pager');
+
+      if (!$pager) {
+        $pager = array('less', '-R', '--');
+      }
+
+      // Try to show the content through a pager.
+      $err = id(new PhutilExecPassthru('%Ls', $pager))
+        ->write($corpus)
+        ->resolve();
+
+      // If the pager exits with an error, print the content normally.
+      if ($err) {
+        echo $corpus;
+      }
+    }
+
+    return $this;
+  }
 
 }

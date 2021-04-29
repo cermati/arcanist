@@ -20,6 +20,7 @@ abstract class PhutilTestCase extends Phobject {
   private $paths;
   private $renderer;
 
+  private static $executables = array();
 
 /* -(  Making Test Assertions  )--------------------------------------------- */
 
@@ -407,7 +408,7 @@ abstract class PhutilTestCase extends Phobject {
    *
    * @task internal
    */
-  final private function failTest($reason) {
+  private function failTest($reason) {
     $this->resultTest(ArcanistUnitTestResult::RESULT_FAIL, $reason);
   }
 
@@ -420,7 +421,7 @@ abstract class PhutilTestCase extends Phobject {
    *
    * @task internal
    */
-  final private function passTest($reason) {
+  private function passTest($reason) {
     $this->resultTest(ArcanistUnitTestResult::RESULT_PASS, $reason);
   }
 
@@ -432,12 +433,12 @@ abstract class PhutilTestCase extends Phobject {
    * @return void
    * @task internal
    */
-  final private function skipTest($reason) {
+  private function skipTest($reason) {
     $this->resultTest(ArcanistUnitTestResult::RESULT_SKIP, $reason);
   }
 
 
-  final private function resultTest($test_result, $reason) {
+  private function resultTest($test_result, $reason) {
     $coverage = $this->endCoverage();
 
     $result = new ArcanistUnitTestResult();
@@ -552,7 +553,7 @@ abstract class PhutilTestCase extends Phobject {
   /**
    * @phutil-external-symbol function xdebug_start_code_coverage
    */
-  final private function beginCoverage() {
+  private function beginCoverage() {
     if (!$this->enableCoverage) {
       return;
     }
@@ -565,7 +566,7 @@ abstract class PhutilTestCase extends Phobject {
    * @phutil-external-symbol function xdebug_get_code_coverage
    * @phutil-external-symbol function xdebug_stop_code_coverage
    */
-  final private function endCoverage() {
+  private function endCoverage() {
     if (!$this->enableCoverage) {
       return;
     }
@@ -617,7 +618,7 @@ abstract class PhutilTestCase extends Phobject {
     return $coverage;
   }
 
-  final private function assertCoverageAvailable() {
+  private function assertCoverageAvailable() {
     if (!function_exists('xdebug_start_code_coverage')) {
       throw new Exception(
         pht("You've enabled code coverage but XDebug is not installed."));
@@ -674,7 +675,7 @@ abstract class PhutilTestCase extends Phobject {
    *
    * @return map
    */
-  final private static function getCallerInfo() {
+  private static function getCallerInfo() {
     $callee = array();
     $caller = array();
     $seen = false;
@@ -747,5 +748,38 @@ abstract class PhutilTestCase extends Phobject {
     $this->failTest($output);
     throw new PhutilTestTerminatedException($output);
   }
+
+  final protected function assertExecutable($binary) {
+    if (!isset(self::$executables[$binary])) {
+      switch ($binary) {
+        case 'xhpast':
+          $ok = true;
+          if (!PhutilXHPASTBinary::isAvailable()) {
+            try {
+              PhutilXHPASTBinary::build();
+            } catch (Exception $ex) {
+              $ok = false;
+            }
+          }
+          break;
+        default:
+          $ok = Filesystem::binaryExists($binary);
+          break;
+      }
+
+      self::$executables[$binary] = $ok;
+    }
+
+    if (!self::$executables[$binary]) {
+      $this->assertSkipped(
+        pht('Required executable "%s" is not available.', $binary));
+    }
+  }
+
+  final protected function getSupportExecutable($executable) {
+    $root = dirname(phutil_get_library_root('arcanist'));
+    return $root.'/support/unit/'.$executable.'.php';
+  }
+
 
 }

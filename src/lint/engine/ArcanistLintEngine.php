@@ -56,7 +56,6 @@ abstract class ArcanistLintEngine extends Phobject {
 
   private $changedLines = array();
 
-  private $enableAsyncLint = false;
   private $configurationManager;
 
   private $linterResources = array();
@@ -108,15 +107,6 @@ abstract class ArcanistLintEngine extends Phobject {
   final public function setFileData($data) {
     $this->fileData = $data + $this->fileData;
     return $this;
-  }
-
-  final public function setEnableAsyncLint($enable_async_lint) {
-    $this->enableAsyncLint = $enable_async_lint;
-    return $this;
-  }
-
-  final public function getEnableAsyncLint() {
-    return $this->enableAsyncLint;
   }
 
   final public function loadData($path) {
@@ -284,7 +274,7 @@ abstract class ArcanistLintEngine extends Phobject {
     return ArcanistLintSeverity::isAtLeastAsSevere($severity, $minimum);
   }
 
-  final private function shouldUseCache(
+  private function shouldUseCache(
     $cache_granularity,
     $repository_version) {
 
@@ -323,7 +313,7 @@ abstract class ArcanistLintEngine extends Phobject {
     return $this;
   }
 
-  final private function isRelevantMessage(ArcanistLintMessage $message) {
+  private function isRelevantMessage(ArcanistLintMessage $message) {
     // When a user runs "arc lint", we default to raising only warnings on
     // lines they have changed (errors are still raised anywhere in the
     // file). The list of $changed lines may be null, to indicate that the
