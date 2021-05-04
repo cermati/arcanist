@@ -98,6 +98,29 @@ final class ArcanistArcConfigurationEngineExtension
           array(
             'https://phabricator.mycompany.com/',
           )),
+      id(new ArcanistStringConfigOption())
+       ->setKey('https.user-cert')
+       ->setHelp(
+          pht(
+            "Path to a PEM certificate file to be used for arcanist's cURL ".
+            "calls. This is used primarily when your conduit endpoint is ".
+            "behind HTTPS with client certificate verification enabled."))
+       ->setExamples(
+        array(
+          'support/yourcert.pem',
+        )),
+      id(new ArcanistStringConfigOption())
+        ->setKey('https.user-key')
+        ->setHelp(
+          pht(
+            "Path to a private key file to be used for arcanist's cURL calls. ".
+            "To be used alongside https.user-cert. This is used primarily ".
+            "when your conduit endpoint is behind HTTPS with client certificate ".
+            "verification enabled."))
+        ->setExamples(
+         array(
+           'support/yourkey.key',
+         )),
       id(new ArcanistAliasesConfigOption())
         ->setKey(self::KEY_ALIASES)
         ->setDefaultValue(array())
