@@ -109,6 +109,19 @@ final class ArcanistRuntime {
     $config->setConfigOptions($config_engine->newConfigOptionsMap());
     $config->validateConfiguration($this);
 
+    // Apply global user cert from configs.
+    $user_cert = $config->getConfig('https.user-cert');
+    if ($user_cert) {
+      HTTPSFuture::setGlobalUserCertFromPath($user_cert);
+
+      // Certificate key is optional if the certificate PEM file already contains
+      // the private key
+      $user_key = $config->getConfig('https.user-key');
+      if ($user_key) {
+        HTTPSFuture::setGlobalUserCertKeyFromPath($user_key);
+      }
+    }
+
     $toolset = $this->newToolset($argv);
     $this->setToolset($toolset);
 
